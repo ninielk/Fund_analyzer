@@ -1,0 +1,32 @@
+# Environnements virtuels
+.venv/
+venv/
+env/
+.env
+
+# Poetry
+poetry.lock
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Données sensibles (décommente si tu veux exclure les données)
+# data/*.xlsx
+# data/*.csv
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/secrets.toml

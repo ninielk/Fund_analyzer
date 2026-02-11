@@ -1,0 +1,3 @@
+# Ce dossier contient les fichiers de données
+# Place ton fichier Excel/CSV ici et nomme-le fonds_data.xlsx
+# (ou modifie DATA_PATH dans config.py)
