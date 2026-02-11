@@ -1,5 +1,5 @@
 # ==============================================================================
-# CHARTS - Fonctions de visualisation avec Plotly
+# CHARTS - Fonctions de visualisation avec Plotly (VERSION BAR CHARTS)
 # ==============================================================================
 
 import pandas as pd
@@ -16,23 +16,22 @@ from config import COLORS, BENCHMARK_COLOR
 
 def plot_normalized_prices(
     prices: pd.DataFrame,
-    benchmark_col: str = None,
+    benchmark_cols: list = None,
     title: str = "Evolution des prix (Base 100)"
 ) -> go.Figure:
     """
     Graphique des prix normalisés base 100.
-    
-    Permet de comparer visuellement la performance de plusieurs fonds
-    partant tous du même point.
     """
     # Normaliser base 100
-    normalized = prices / prices.iloc[0] * 100
+    normalized = prices / prices.bfill().iloc[0] * 100
     
     fig = go.Figure()
     
+    benchmark_cols_lower = [col.lower() for col in (benchmark_cols or [])]
+    
     color_idx = 0
     for col in normalized.columns:
-        is_benchmark = benchmark_col and col.lower() == benchmark_col.lower()
+        is_benchmark = col.lower() in benchmark_cols_lower
         
         fig.add_trace(go.Scatter(
             x=normalized.index,
@@ -66,7 +65,6 @@ def plot_normalized_prices(
         height=500
     )
     
-    # Ligne horizontale à 100
     fig.add_hline(y=100, line_dash="dot", line_color="gray", opacity=0.5)
     
     return fig
@@ -74,16 +72,15 @@ def plot_normalized_prices(
 
 def plot_drawdown(
     prices: pd.DataFrame,
-    benchmark_col: str = None,
+    benchmark_cols: list = None,
     title: str = "Drawdown"
 ) -> go.Figure:
     """
-    Graphique des drawdowns (pertes depuis le plus haut).
-    
-    Montre quand et de combien chaque fonds a chuté par rapport
-    à son sommet historique.
+    Graphique des drawdowns.
     """
     fig = go.Figure()
+    
+    benchmark_cols_lower = [col.lower() for col in (benchmark_cols or [])]
     
     color_idx = 0
     for col in prices.columns:
@@ -91,7 +88,7 @@ def plot_drawdown(
         running_max = prices[col].cummax()
         drawdown = (prices[col] - running_max) / running_max * 100
         
-        is_benchmark = benchmark_col and col.lower() == benchmark_col.lower()
+        is_benchmark = col.lower() in benchmark_cols_lower
         
         fig.add_trace(go.Scatter(
             x=drawdown.index,
@@ -128,22 +125,130 @@ def plot_drawdown(
     return fig
 
 
+def plot_indicator_bar_chart(
+    indicators_df: pd.DataFrame,
+    indicator_col: str,
+    title: str = None,
+    color_scale: str = "RdYlGn",
+    reverse_colors: bool = False
+) -> go.Figure:
+    """
+    Bar chart horizontal pour comparer un indicateur entre fonds.
+    
+    Parameters
+    ----------
+    indicators_df : pd.DataFrame
+        DataFrame avec colonne 'Fonds' et l'indicateur
+    indicator_col : str
+        Nom de la colonne indicateur
+    title : str
+        Titre du graphique
+    color_scale : str
+        Palette de couleurs (RdYlGn, Blues, etc.)
+    reverse_colors : bool
+        Inverser les couleurs (pour les indicateurs où plus petit = mieux)
+    """
+    if title is None:
+        title = indicator_col
+    
+    # Trier par valeur
+    df_sorted = indicators_df.dropna(subset=[indicator_col]).sort_values(indicator_col, ascending=True)
+    
+    if len(df_sorted) == 0:
+        fig = go.Figure()
+        fig.add_annotation(text="Pas de données", xref="paper", yref="paper", x=0.5, y=0.5)
+        return fig
+    
+    # Couleurs basées sur les valeurs
+    colors = df_sorted[indicator_col]
+    if reverse_colors:
+        colors = -colors
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Bar(
+        x=df_sorted[indicator_col],
+        y=df_sorted['Fonds'],
+        orientation='h',
+        marker=dict(
+            color=df_sorted[indicator_col],
+            colorscale=color_scale,
+            reversescale=reverse_colors,
+            showscale=False
+        ),
+        text=df_sorted[indicator_col].apply(lambda x: f"{x:.2f}"),
+        textposition='outside',
+        hovertemplate="%{y}<br>" + indicator_col + ": %{x:.3f}<extra></extra>"
+    ))
+    
+    fig.update_layout(
+        title=dict(text=title, x=0.5, font=dict(size=16)),
+        xaxis_title=indicator_col,
+        yaxis_title="",
+        template="plotly_white",
+        height=max(300, len(df_sorted) * 35),
+        margin=dict(l=200)  # Marge pour les noms de fonds
+    )
+    
+    return fig
+
+
+def plot_multi_indicator_bars(
+    indicators_df: pd.DataFrame,
+    indicator_cols: list,
+    title: str = "Comparaison des indicateurs"
+) -> go.Figure:
+    """
+    Bar chart groupé pour plusieurs indicateurs.
+    """
+    fig = go.Figure()
+    
+    for i, col in enumerate(indicator_cols):
+        if col not in indicators_df.columns:
+            continue
+        fig.add_trace(go.Bar(
+            name=col,
+            x=indicators_df['Fonds'],
+            y=indicators_df[col],
+            marker_color=COLORS[i % len(COLORS)],
+            text=indicators_df[col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "-"),
+            textposition='outside'
+        ))
+    
+    fig.update_layout(
+        title=dict(text=title, x=0.5, font=dict(size=18)),
+        barmode='group',
+        xaxis_title="Fonds",
+        yaxis_title="Valeur",
+        template="plotly_white",
+        height=500,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        xaxis_tickangle=-45
+    )
+    
+    return fig
+
+
 def plot_risk_return_scatter(
     indicators_df: pd.DataFrame,
     x_col: str = "Volatilite (%)",
     y_col: str = "Rendement Annualise (%)",
-    size_col: str = None,
     title: str = "Rendement vs Risque"
 ) -> go.Figure:
     """
     Scatter plot rendement/risque.
-    
-    Chaque point est un fonds. Idéalement on veut être en haut à gauche
-    (haut rendement, faible risque).
     """
     fig = go.Figure()
     
     for idx, row in indicators_df.iterrows():
+        if pd.isna(row[x_col]) or pd.isna(row[y_col]):
+            continue
         fig.add_trace(go.Scatter(
             x=[row[x_col]],
             y=[row[y_col]],
@@ -173,10 +278,6 @@ def plot_risk_return_scatter(
         height=500
     )
     
-    # Ajouter une ligne de référence (ratio Sharpe = 1 par exemple)
-    x_range = indicators_df[x_col].max() - indicators_df[x_col].min()
-    x_vals = np.linspace(0, indicators_df[x_col].max() + x_range * 0.1, 50)
-    
     return fig
 
 
@@ -184,18 +285,17 @@ def plot_rolling_sharpe(
     returns: pd.DataFrame,
     window: int = 63,
     risk_free_rate: float = 0.03,
-    benchmark_col: str = None,
+    benchmark_cols: list = None,
     title: str = "Sharpe Ratio Glissant (3 mois)"
 ) -> go.Figure:
     """
-    Graphique du Sharpe ratio glissant dans le temps.
-    
-    Permet de voir si la performance ajustée du risque est stable
-    ou fluctuante.
+    Graphique du Sharpe ratio glissant.
     """
     from .indicators import calculate_rolling_sharpe
     
     fig = go.Figure()
+    
+    benchmark_cols_lower = [col.lower() for col in (benchmark_cols or [])]
     
     color_idx = 0
     for col in returns.columns:
@@ -205,7 +305,7 @@ def plot_rolling_sharpe(
             risk_free_rate=risk_free_rate
         )
         
-        is_benchmark = benchmark_col and col.lower() == benchmark_col.lower()
+        is_benchmark = col.lower() in benchmark_cols_lower
         
         fig.add_trace(go.Scatter(
             x=rolling_sharpe.index,
@@ -238,7 +338,6 @@ def plot_rolling_sharpe(
         height=400
     )
     
-    # Lignes de référence
     fig.add_hline(y=0, line_dash="dot", line_color="red", opacity=0.5)
     fig.add_hline(y=1, line_dash="dot", line_color="green", opacity=0.5)
     
@@ -252,9 +351,6 @@ def plot_benchmark_comparison(
 ) -> go.Figure:
     """
     Graphique de la surperformance cumulée par rapport au benchmark.
-    
-    Montre si le fonds fait mieux ou moins bien que le benchmark
-    au fil du temps.
     """
     if benchmark_col not in returns.columns:
         return go.Figure()
@@ -271,7 +367,7 @@ def plot_benchmark_comparison(
         # Surperformance = rendement fonds - rendement benchmark
         outperformance = returns[col] - benchmark_ret
         cumulative_outperf = (1 + outperformance).cumprod() - 1
-        cumulative_outperf = cumulative_outperf * 100  # En %
+        cumulative_outperf = cumulative_outperf * 100
         
         fig.add_trace(go.Scatter(
             x=cumulative_outperf.index,
@@ -303,48 +399,7 @@ def plot_benchmark_comparison(
         height=400
     )
     
-    # Ligne à 0
     fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=2)
-    
-    return fig
-
-
-def plot_indicator_comparison(
-    indicators_df: pd.DataFrame,
-    indicator_col: str,
-    title: str = None
-) -> go.Figure:
-    """
-    Bar chart comparant un indicateur entre tous les fonds.
-    """
-    if title is None:
-        title = f"Comparaison: {indicator_col}"
-    
-    # Trier par valeur décroissante
-    df_sorted = indicators_df.sort_values(indicator_col, ascending=True)
-    
-    fig = go.Figure()
-    
-    fig.add_trace(go.Bar(
-        x=df_sorted[indicator_col],
-        y=df_sorted['Fonds'],
-        orientation='h',
-        marker=dict(
-            color=df_sorted[indicator_col],
-            colorscale='RdYlGn',
-            showscale=True,
-            colorbar=dict(title=indicator_col)
-        ),
-        hovertemplate="%{y}<br>" + indicator_col + ": %{x:.2f}<extra></extra>"
-    ))
-    
-    fig.update_layout(
-        title=dict(text=title, x=0.5, font=dict(size=20)),
-        xaxis_title=indicator_col,
-        yaxis_title="",
-        template="plotly_white",
-        height=max(300, len(df_sorted) * 40)
-    )
     
     return fig
 
@@ -355,8 +410,6 @@ def plot_correlation_matrix(
 ) -> go.Figure:
     """
     Heatmap des corrélations entre fonds.
-    
-    Permet de voir quels fonds bougent ensemble (diversification).
     """
     corr_matrix = returns.corr()
     
@@ -376,44 +429,7 @@ def plot_correlation_matrix(
         title=dict(text=title, x=0.5, font=dict(size=20)),
         template="plotly_white",
         height=500,
-        width=600
-    )
-    
-    return fig
-
-
-def create_summary_table(indicators_df: pd.DataFrame) -> go.Figure:
-    """
-    Crée un tableau formaté des indicateurs.
-    """
-    # Formater les colonnes
-    df_display = indicators_df.copy()
-    
-    # Arrondir
-    for col in df_display.columns:
-        if col != 'Fonds' and df_display[col].dtype in ['float64', 'float32']:
-            df_display[col] = df_display[col].round(2)
-    
-    fig = go.Figure(data=[go.Table(
-        header=dict(
-            values=list(df_display.columns),
-            fill_color='#1f77b4',
-            font=dict(color='white', size=12),
-            align='center',
-            height=40
-        ),
-        cells=dict(
-            values=[df_display[col] for col in df_display.columns],
-            fill_color=[['#f9f9f9', '#ffffff'] * (len(df_display) // 2 + 1)],
-            align='center',
-            height=35,
-            font=dict(size=11)
-        )
-    )])
-    
-    fig.update_layout(
-        title=dict(text="Tableau Récapitulatif des Indicateurs", x=0.5),
-        height=min(600, 100 + len(df_display) * 40)
+        width=700
     )
     
     return fig

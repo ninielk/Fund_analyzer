@@ -14,105 +14,12 @@ from config import TRADING_DAYS_PER_YEAR, OMEGA_THRESHOLD
 
 
 # ==============================================================================
-# TAUX SANS RISQUE (EURIBOR)
-# ==============================================================================
-
-def get_euribor_rate(tenor: str = "3M") -> float:
-    """
-    Récupère le taux Euribor actuel via l'API de la BCE ou Yahoo Finance.
-    
-    Parameters
-    ----------
-    tenor : str
-        Maturité: "1M", "3M", "6M", "12M"
-    
-    Returns
-    -------
-    float
-        Taux Euribor annualisé (en décimal, ex: 0.035 pour 3.5%)
-    
-    Note
-    ----
-    Si la récupération échoue, retourne le taux par défaut de config.py
-    """
-    try:
-        import yfinance as yf
-        
-        # Mapping des tickers Yahoo Finance pour Euribor
-        euribor_tickers = {
-            "1M": "^EURIBOR1M",
-            "3M": "^EURIBOR3M",  
-            "6M": "^EURIBOR6M",
-            "12M": "^EURIBOR1Y",
-            "1Y": "^EURIBOR1Y"
-        }
-        
-        ticker = euribor_tickers.get(tenor.upper(), "^EURIBOR3M")
-        data = yf.Ticker(ticker)
-        hist = data.history(period="5d")
-        
-        if not hist.empty:
-            # Le taux est en pourcentage, convertir en décimal
-            rate = hist['Close'].iloc[-1] / 100
-            return rate
-    except Exception as e:
-        print(f"Erreur récupération Euribor: {e}")
-    
-    # Fallback: taux par défaut
-    from config import DEFAULT_RISK_FREE_RATE
-    return DEFAULT_RISK_FREE_RATE
-
-
-def get_risk_free_rate_series(
-    start_date: pd.Timestamp,
-    end_date: pd.Timestamp,
-    tenor: str = "3M"
-) -> pd.Series:
-    """
-    Récupère la série historique des taux Euribor.
-    
-    Utile pour des calculs plus précis avec taux variable.
-    """
-    try:
-        import yfinance as yf
-        
-        euribor_tickers = {
-            "1M": "^EURIBOR1M",
-            "3M": "^EURIBOR3M",
-            "6M": "^EURIBOR6M",
-            "12M": "^EURIBOR1Y"
-        }
-        
-        ticker = euribor_tickers.get(tenor.upper(), "^EURIBOR3M")
-        data = yf.download(ticker, start=start_date, end=end_date, progress=False)
-        
-        if not data.empty:
-            return data['Close'] / 100  # Convertir en décimal
-    except Exception as e:
-        print(f"Erreur récupération série Euribor: {e}")
-    
-    return None
-
-
-# ==============================================================================
 # INDICATEURS PAR PERIODE (1Y, 3Y, 5Y)
 # ==============================================================================
 
 def get_period_returns(returns: pd.Series, years: int) -> pd.Series:
     """
     Extrait les rendements des N dernières années.
-    
-    Parameters
-    ----------
-    returns : pd.Series
-        Série complète des rendements
-    years : int
-        Nombre d'années à extraire
-    
-    Returns
-    -------
-    pd.Series
-        Rendements sur la période (ou série vide si pas assez de données)
     """
     if len(returns) < 1:
         return pd.Series()
@@ -120,7 +27,7 @@ def get_period_returns(returns: pd.Series, years: int) -> pd.Series:
     n_days = years * TRADING_DAYS_PER_YEAR
     
     if len(returns) < n_days:
-        return pd.Series()  # Pas assez de données
+        return pd.Series()
     
     return returns.iloc[-n_days:]
 
@@ -128,7 +35,7 @@ def get_period_returns(returns: pd.Series, years: int) -> pd.Series:
 def return_1y(returns: pd.Series) -> float:
     """Rendement sur 1 an (annualisé)."""
     period_ret = get_period_returns(returns, 1)
-    if len(period_ret) < TRADING_DAYS_PER_YEAR * 0.8:  # Au moins 80% des jours
+    if len(period_ret) < TRADING_DAYS_PER_YEAR * 0.8:
         return np.nan
     return annualized_return(period_ret)
 
@@ -136,7 +43,7 @@ def return_1y(returns: pd.Series) -> float:
 def return_3y(returns: pd.Series) -> float:
     """Rendement sur 3 ans (annualisé)."""
     period_ret = get_period_returns(returns, 3)
-    if len(period_ret) < TRADING_DAYS_PER_YEAR * 2.5:  # Au moins ~2.5 ans
+    if len(period_ret) < TRADING_DAYS_PER_YEAR * 2.5:
         return np.nan
     return annualized_return(period_ret)
 
@@ -144,7 +51,7 @@ def return_3y(returns: pd.Series) -> float:
 def return_5y(returns: pd.Series) -> float:
     """Rendement sur 5 ans (annualisé)."""
     period_ret = get_period_returns(returns, 5)
-    if len(period_ret) < TRADING_DAYS_PER_YEAR * 4:  # Au moins 4 ans
+    if len(period_ret) < TRADING_DAYS_PER_YEAR * 4:
         return np.nan
     return annualized_return(period_ret)
 
@@ -206,9 +113,6 @@ def annualized_return(returns: pd.Series) -> float:
     Calcule le rendement annualisé.
     
     Formule: (1 + rendement_total)^(252/n_jours) - 1
-    
-    Explication Grand-Mere:
-    "C'est combien tu gagnes en moyenne par an si tu gardes ton placement"
     """
     if len(returns) < 2:
         return np.nan
@@ -228,10 +132,6 @@ def annualized_volatility(returns: pd.Series) -> float:
     Calcule la volatilité annualisée (écart-type).
     
     Formule: ecart_type_quotidien * sqrt(252)
-    
-    Explication Grand-Mere:
-    "C'est à quel point ton placement fait les montagnes russes.
-    Plus c'est haut, plus c'est agité."
     """
     if len(returns) < 2:
         return np.nan
@@ -244,11 +144,6 @@ def sharpe_ratio(returns: pd.Series, risk_free_rate: float = 0.03) -> float:
     Calcule le ratio de Sharpe.
     
     Formule: (rendement_annualisé - taux_sans_risque) / volatilité_annualisée
-    
-    Explication Grand-Mere:
-    "Est-ce que le risque que tu prends en vaut la peine ?
-    Plus c'est haut, mieux c'est. Au-dessus de 1 c'est bien,
-    au-dessus de 2 c'est très bien."
     """
     ann_ret = annualized_return(returns)
     ann_vol = annualized_volatility(returns)
@@ -264,10 +159,6 @@ def sortino_ratio(returns: pd.Series, risk_free_rate: float = 0.03) -> float:
     Calcule le ratio de Sortino.
     
     Formule: (rendement_annualisé - taux_sans_risque) / volatilité_négative_annualisée
-    
-    Explication Grand-Mere:
-    "Comme le Sharpe, mais on punit seulement les baisses, pas les hausses.
-    C'est plus juste parce qu'on s'en fiche si ça monte beaucoup !"
     """
     ann_ret = annualized_return(returns)
     
@@ -287,21 +178,27 @@ def sortino_ratio(returns: pd.Series, risk_free_rate: float = 0.03) -> float:
 
 def semi_variance(returns: pd.Series) -> float:
     """
-    Calcule la semi-variance (variance des rendements négatifs).
+    Calcule la semi-variance (variance des rendements en-dessous de la moyenne).
     
-    Formule: variance des rendements en-dessous de la moyenne
-    
-    Explication Grand-Mere:
-    "Ça mesure seulement les mauvaises surprises, pas les bonnes.
-    Plus c'est bas, moins tu as de risque de perdre gros."
+    Formule correcte: moyenne des carrés des écarts négatifs par rapport à la moyenne
     """
-    mean_return = returns.mean()
-    negative_returns = returns[returns < mean_return]
-    
-    if len(negative_returns) < 2:
+    if len(returns) < 2:
         return np.nan
     
-    return negative_returns.var()
+    mean_return = returns.mean()
+    
+    # Sélectionner les rendements en-dessous de la moyenne
+    downside_returns = returns[returns < mean_return]
+    
+    if len(downside_returns) < 2:
+        return np.nan
+    
+    # Semi-variance = moyenne des carrés des écarts par rapport à la moyenne
+    # (uniquement pour les rendements en-dessous)
+    squared_deviations = (downside_returns - mean_return) ** 2
+    semi_var = squared_deviations.mean()
+    
+    return semi_var
 
 
 def beta(returns: pd.Series, benchmark_returns: pd.Series) -> float:
@@ -309,12 +206,6 @@ def beta(returns: pd.Series, benchmark_returns: pd.Series) -> float:
     Calcule le Beta par rapport au benchmark.
     
     Formule: Covariance(fonds, marché) / Variance(marché)
-    
-    Explication Grand-Mere:
-    "Quand le marché bouge de 1%, ton fonds bouge de combien ?
-    Beta = 1 : pareil que le marché
-    Beta > 1 : plus nerveux que le marché
-    Beta < 1 : plus calme que le marché"
     """
     # Aligner les séries
     aligned = pd.concat([returns, benchmark_returns], axis=1).dropna()
@@ -326,7 +217,7 @@ def beta(returns: pd.Series, benchmark_returns: pd.Series) -> float:
     bench_ret = aligned.iloc[:, 1]
     
     covariance = np.cov(fund_ret, bench_ret)[0, 1]
-    variance_benchmark = np.var(bench_ret)
+    variance_benchmark = np.var(bench_ret, ddof=1)
     
     if variance_benchmark == 0:
         return np.nan
@@ -339,11 +230,6 @@ def alpha(returns: pd.Series, benchmark_returns: pd.Series, risk_free_rate: floa
     Calcule l'Alpha de Jensen (CAPM).
     
     Formule: Rendement_fonds - (Rf + Beta * (Rm - Rf))
-    
-    Explication Grand-Mere:
-    "C'est le petit plus (ou le petit moins) que le gérant apporte
-    par rapport à ce qu'on attendait vu le risque pris.
-    Positif = le gérant est bon. Négatif = il fait moins bien que prévu."
     """
     beta_val = beta(returns, benchmark_returns)
     
@@ -363,11 +249,6 @@ def max_drawdown(prices: pd.Series) -> float:
     Calcule le Maximum Drawdown.
     
     Formule: (Creux - Pic) / Pic (la pire chute depuis un sommet)
-    
-    Explication Grand-Mere:
-    "C'est la pire dégringolade que tu aurais pu subir si tu avais
-    acheté au pire moment et vendu au pire moment.
-    -20% veut dire que dans le pire des cas, tu aurais perdu 20%."
     """
     if len(prices) < 2:
         return np.nan
@@ -387,10 +268,6 @@ def calmar_ratio(returns: pd.Series, prices: pd.Series) -> float:
     Calcule le ratio de Calmar.
     
     Formule: Rendement annualisé / |Max Drawdown|
-    
-    Explication Grand-Mere:
-    "C'est le rendement par rapport à la pire chute.
-    Plus c'est haut, plus tu es bien récompensé pour le risque de grosse perte."
     """
     ann_ret = annualized_return(returns)
     mdd = max_drawdown(prices)
@@ -406,11 +283,6 @@ def omega_ratio(returns: pd.Series, threshold: float = None) -> float:
     Calcule le ratio Omega.
     
     Formule: Somme des gains au-dessus du seuil / Somme des pertes en-dessous
-    
-    Explication Grand-Mere:
-    "Pour chaque euro que tu risques de perdre, combien tu peux gagner ?
-    Omega > 1 = tu gagnes plus que tu perds en moyenne.
-    Plus c'est haut, mieux c'est."
     """
     if threshold is None:
         threshold = OMEGA_THRESHOLD
@@ -429,41 +301,41 @@ def omega_ratio(returns: pd.Series, threshold: float = None) -> float:
     
     return sum_gains / sum_losses
 
-
-def pct_beats_benchmark(returns: pd.Series, benchmark_returns: pd.Series) -> float:
+def nb_beats_benchmark(returns: pd.Series, benchmark_returns: pd.Series) -> tuple:
     """
-    Calcule le pourcentage de périodes où le fonds bat le benchmark.
+    Calcule le nombre de fois où le fonds bat le benchmark.
     
-    Formule: Nb(jours où fonds > benchmark) / Nb(jours total)
+    FORMULE 
+    - Nb fois = nombre de jours où rendement_fonds > rendement_benchmark
+    - Total obs = nombre total de jours comparés
     
-    Explication Grand-Mere:
-    "Sur 100 jours, combien de fois ton fonds a fait mieux que le marché ?
-    50% = pareil que le marché en moyenne.
-    Plus c'est haut, plus souvent tu gagnes."
+    On compare les rendements QUOTIDIENS (pas les prix).
+    
+    Returns
+    -------
+    tuple
+        (nb_fois_bat, total_observations)
     """
-    # Aligner les séries
+    # Aligner les séries de RENDEMENTS
     aligned = pd.concat([returns, benchmark_returns], axis=1).dropna()
     
     if len(aligned) < 5:
-        return np.nan
+        return np.nan, np.nan
     
     fund_ret = aligned.iloc[:, 0]
     bench_ret = aligned.iloc[:, 1]
     
-    beats = (fund_ret > bench_ret).sum()
-    total = len(fund_ret)
+    # Compter le nombre de jours où le fonds a un rendement > benchmark
+    nb_beats = int((fund_ret > bench_ret).sum())
+    total_obs = len(fund_ret)
     
-    return beats / total
-
+    return nb_beats, total_obs
 
 def cumulative_return(returns: pd.Series) -> float:
     """
     Calcule le rendement cumulé total.
     
     Formule: (1 + r1) * (1 + r2) * ... * (1 + rn) - 1
-    
-    Explication Grand-Mere:
-    "Si tu avais mis 100 euros au début, combien tu aurais maintenant ?"
     """
     if len(returns) < 1:
         return np.nan
@@ -478,7 +350,7 @@ def cumulative_return(returns: pd.Series) -> float:
 def calculate_all_indicators(
     prices: pd.DataFrame,
     returns: pd.DataFrame,
-    benchmark_col: str,
+    benchmark_cols: list,
     risk_free_rate: float = 0.03
 ) -> pd.DataFrame:
     """
@@ -490,8 +362,8 @@ def calculate_all_indicators(
         DataFrame des prix
     returns : pd.DataFrame
         DataFrame des rendements
-    benchmark_col : str
-        Nom de la colonne benchmark
+    benchmark_cols : list
+        Liste des noms de colonnes benchmark
     risk_free_rate : float
         Taux sans risque annualisé
     
@@ -502,12 +374,15 @@ def calculate_all_indicators(
     """
     results = []
     
-    # Identifier le benchmark
-    bench_prices = prices[benchmark_col] if benchmark_col in prices.columns else None
-    bench_returns = returns[benchmark_col] if benchmark_col in returns.columns else None
+    # Identifier les benchmarks
+    benchmark_cols_lower = [col.lower() for col in benchmark_cols]
     
-    # Colonnes des fonds (exclure benchmark)
-    fund_cols = [col for col in prices.columns if col.lower() != benchmark_col.lower()]
+    # Colonnes des fonds (exclure benchmarks)
+    fund_cols = [col for col in prices.columns if col.lower() not in benchmark_cols_lower]
+    
+    # Utiliser le premier benchmark pour les calculs relatifs
+    primary_bench_col = benchmark_cols[0] if benchmark_cols else None
+    bench_returns = returns[primary_bench_col] if primary_bench_col and primary_bench_col in returns.columns else None
     
     for fund in fund_cols:
         fund_prices = prices[fund].dropna()
@@ -547,11 +422,14 @@ def calculate_all_indicators(
             'Rendement Cumule (%)': cumulative_return(fund_returns) * 100,
         }
         
+        # Indicateurs relatifs au benchmark (pour chaque benchmark)
         # Indicateurs relatifs au benchmark
         if bench_returns is not None:
             indicators['Beta'] = beta(fund_returns, bench_returns)
             indicators['Alpha (%)'] = alpha(fund_returns, bench_returns, risk_free_rate) * 100
-            indicators['% Bat le Benchmark'] = pct_beats_benchmark(fund_returns, bench_returns) * 100
+            nb_beats, total_obs = nb_beats_benchmark(fund_returns, bench_returns)
+            indicators['Nb Fois Bat Benchmark'] = nb_beats
+            indicators['Total Observations'] = total_obs
         
         results.append(indicators)
     
@@ -573,24 +451,6 @@ def calculate_indicator(
 ) -> float:
     """
     Calcule un indicateur spécifique.
-    
-    Parameters
-    ----------
-    indicator_name : str
-        Nom de l'indicateur
-    returns : pd.Series
-        Rendements du fonds
-    prices : pd.Series, optional
-        Prix du fonds (pour max drawdown, calmar)
-    benchmark_returns : pd.Series, optional
-        Rendements du benchmark (pour beta, alpha)
-    risk_free_rate : float
-        Taux sans risque
-    
-    Returns
-    -------
-    float
-        Valeur de l'indicateur
     """
     indicator_map = {
         'rendement': lambda: annualized_return(returns),
@@ -616,25 +476,11 @@ def calculate_indicator(
 
 def calculate_rolling_sharpe(
     returns: pd.Series,
-    window: int = 63,  # ~3 mois
+    window: int = 63,
     risk_free_rate: float = 0.03
 ) -> pd.Series:
     """
     Calcule le Sharpe ratio glissant.
-    
-    Parameters
-    ----------
-    returns : pd.Series
-        Rendements quotidiens
-    window : int
-        Taille de la fenêtre (en jours)
-    risk_free_rate : float
-        Taux sans risque annualisé
-    
-    Returns
-    -------
-    pd.Series
-        Sharpe ratio glissant
     """
     rf_daily = (1 + risk_free_rate) ** (1/TRADING_DAYS_PER_YEAR) - 1
     
@@ -649,16 +495,6 @@ def calculate_rolling_sharpe(
 def calculate_drawdown_series(prices: pd.Series) -> pd.Series:
     """
     Calcule la série temporelle des drawdowns.
-    
-    Parameters
-    ----------
-    prices : pd.Series
-        Prix du fonds
-    
-    Returns
-    -------
-    pd.Series
-        Drawdown à chaque date (en %)
     """
     running_max = prices.cummax()
     drawdown = (prices - running_max) / running_max * 100

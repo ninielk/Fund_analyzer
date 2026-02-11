@@ -1,6 +1,5 @@
 # ==============================================================================
 # DASHBOARD ANALYSE FONDS LARGE CAP
-# Application Streamlit
 # ==============================================================================
 
 import streamlit as st
@@ -11,38 +10,29 @@ from datetime import datetime, timedelta
 # Configuration de la page (DOIT ETRE EN PREMIER)
 st.set_page_config(
     page_title="Analyse Fonds Large Cap",
-    page_icon="📊",
+    page_icon="chart_with_upwards_trend",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # Imports locaux
-from config import (
-    DATA_PATH, 
-    BENCHMARK_COLUMN, 
-    DEFAULT_RISK_FREE_RATE,
-    TRADING_DAYS_PER_YEAR
-)
+from config import TRADING_DAYS_PER_YEAR
 from utils.data_loader import (
     load_data, 
-    get_fund_columns, 
     get_valid_date_range,
     filter_data_by_period,
     calculate_returns,
-    get_fund_metadata
+    get_fund_inception_dates
 )
-from utils.indicators import (
-    calculate_all_indicators,
-    calculate_rolling_sharpe,
-    calculate_drawdown_series
-)
+from utils.indicators import calculate_all_indicators
 from utils.charts import (
     plot_normalized_prices,
     plot_drawdown,
     plot_risk_return_scatter,
     plot_rolling_sharpe,
     plot_benchmark_comparison,
-    plot_indicator_comparison,
+    plot_indicator_bar_chart,
+    plot_multi_indicator_bars,
     plot_correlation_matrix
 )
 
@@ -66,24 +56,12 @@ st.markdown("""
         text-align: center;
         margin-bottom: 2rem;
     }
-    .metric-container {
-        background-color: #f0f2f6;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        margin: 0.5rem 0;
-    }
-    .stMetric {
-        background-color: #ffffff;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-    }
-    .indicator-explanation {
-        background-color: #e8f4f8;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        border-left: 4px solid #1f77b4;
-        margin: 1rem 0;
+    .inception-box {
+        background-color: #f8f9fa;
+        padding: 0.5rem;
+        border-radius: 0.3rem;
+        font-size: 0.85rem;
+        margin-bottom: 0.5rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -93,63 +71,43 @@ st.markdown("""
 # HEADER
 # ==============================================================================
 
-st.markdown('<p class="main-header">📊 Analyse de Fonds Large Cap</p>', unsafe_allow_html=True)
+st.markdown('<p class="main-header">Analyse de Fonds Large Cap</p>', unsafe_allow_html=True)
 st.markdown('<p class="sub-header">Outil d\'analyse de performance et de risque</p>', unsafe_allow_html=True)
 
 
 # ==============================================================================
-# SIDEBAR - CHARGEMENT DES DONNEES ET FILTRES
+# SIDEBAR - CHARGEMENT DES DONNEES
 # ==============================================================================
 
-st.sidebar.header("📁 Données")
+st.sidebar.header("Charger les donnees")
 
-# Option 1: Upload de fichier
 uploaded_file = st.sidebar.file_uploader(
-    "Charger un fichier de données",
+    "Fichier Excel ou CSV",
     type=['xlsx', 'xls', 'csv'],
-    help="Format attendu: Date en première colonne, puis une colonne par fonds"
-)
-
-# Option 2: Utiliser le fichier par défaut
-use_default = st.sidebar.checkbox(
-    "Utiliser le fichier par défaut",
-    value=uploaded_file is None,
-    help=f"Cherche le fichier dans {DATA_PATH}"
+    help="Format: Date en premiere colonne, puis une colonne par fonds/benchmark/taux"
 )
 
 # Charger les données
 df_prices = None
-error_message = None
 
-try:
-    if uploaded_file is not None:
+if uploaded_file is not None:
+    try:
         df_prices = load_data(uploaded_file=uploaded_file)
-        st.sidebar.success(f"✅ Fichier chargé: {uploaded_file.name}")
-    elif use_default:
-        df_prices = load_data(file_path=DATA_PATH)
-        st.sidebar.success(f"✅ Fichier par défaut chargé")
-except Exception as e:
-    error_message = str(e)
-    st.sidebar.error(f"❌ Erreur: {error_message}")
+        st.sidebar.success(f"{uploaded_file.name} charge ({len(df_prices)} observations)")
+    except Exception as e:
+        st.sidebar.error(f"Erreur: {str(e)}")
 
-# Si pas de données, afficher un message et arrêter
 if df_prices is None:
     st.warning("""
-    ### 👋 Bienvenue !
+    ### Bienvenue
     
-    Pour commencer, veuillez charger vos données de fonds via la sidebar.
+    Chargez votre fichier Excel via la sidebar pour commencer.
     
     **Format attendu:**
-    - Fichier Excel (.xlsx) ou CSV
-    - Première colonne: Date
-    - Colonnes suivantes: Prix/NAV de chaque fonds
-    - Une colonne "Benchmark" pour l'indice de référence
-    
-    **Exemple:**
-    | Date | Fonds_A | Fonds_B | Benchmark |
-    |------|---------|---------|-----------|
-    | 2020-01-02 | 100.5 | 98.2 | 3500 |
-    | 2020-01-03 | 101.2 | 99.1 | 3520 |
+    - Colonne Date
+    - Colonnes avec les cours/NAV de chaque fonds
+    - Colonne(s) benchmark (ex: MSCI Europe Large Cap)
+    - Colonne taux sans risque (ex: EONIA, Euribor)
     """)
     st.stop()
 
@@ -159,102 +117,102 @@ if df_prices is None:
 # ==============================================================================
 
 st.sidebar.divider()
-st.sidebar.header("⚙️ Configuration")
+st.sidebar.header("Configuration")
 
-# Identifier la colonne benchmark
 all_columns = list(df_prices.columns)
-benchmark_candidates = [col for col in all_columns if 'bench' in col.lower() or 'indice' in col.lower() or 'index' in col.lower()]
 
-if benchmark_candidates:
-    default_bench = benchmark_candidates[0]
-else:
-    default_bench = all_columns[-1] if all_columns else None
-
-benchmark_col = st.sidebar.selectbox(
-    "Colonne Benchmark",
-    options=all_columns,
-    index=all_columns.index(default_bench) if default_bench in all_columns else 0,
-    help="L'indice de référence pour comparer les fonds"
-)
-
-# Taux sans risque
+# --- Sélection du taux sans risque ---
 st.sidebar.subheader("Taux sans risque")
-
-rf_option = st.sidebar.radio(
-    "Source du taux",
-    options=["Manuel", "Euribor 3M (auto)"],
-    horizontal=True,
-    help="Euribor récupéré automatiquement via Yahoo Finance"
+rf_col = st.sidebar.selectbox(
+    "Colonne taux sans risque",
+    options=["Aucun (manuel)"] + all_columns,
+    index=0,
+    help="Selectionne la colonne contenant le taux sans risque (ex: EONIA, Euribor)"
 )
 
-if rf_option == "Euribor 3M (auto)":
-    try:
-        from utils.indicators import get_euribor_rate
-        risk_free_rate = get_euribor_rate("3M")
-        st.sidebar.success(f"✅ Euribor 3M: {risk_free_rate*100:.2f}%")
-    except Exception as e:
-        st.sidebar.warning(f"⚠️ Erreur Euribor, taux par défaut utilisé")
-        risk_free_rate = DEFAULT_RISK_FREE_RATE
-else:
+if rf_col == "Aucun (manuel)":
     risk_free_rate = st.sidebar.slider(
         "Taux sans risque (%)",
         min_value=0.0,
         max_value=10.0,
-        value=DEFAULT_RISK_FREE_RATE * 100,
-        step=0.1,
-        help="Taux sans risque annualisé pour le calcul du Sharpe/Sortino"
+        value=3.0,
+        step=0.1
     ) / 100
+    rf_column_selected = None
+else:
+    rf_column_selected = rf_col
+    # Calculer le taux moyen annualisé à partir de la série
+    rf_returns = df_prices[rf_col].pct_change().dropna()
+    if len(rf_returns) > 0:
+        # Annualiser le rendement moyen quotidien
+        avg_daily = rf_returns.mean()
+        risk_free_rate = (1 + avg_daily) ** TRADING_DAYS_PER_YEAR - 1
+        st.sidebar.info(f"Taux annualise: {risk_free_rate*100:.2f}%")
+    else:
+        risk_free_rate = 0.03
 
+# --- Sélection des benchmarks ---
+st.sidebar.subheader("Benchmark(s)")
+
+# Colonnes restantes après exclusion du taux sans risque
+available_for_bench = [c for c in all_columns if c != rf_column_selected]
+
+benchmark_cols = st.sidebar.multiselect(
+    "Colonne(s) benchmark",
+    options=available_for_bench,
+    default=[],
+    help="Selectionne une ou plusieurs colonnes benchmark"
+)
+
+# --- Sélection des fonds ---
 st.sidebar.divider()
-st.sidebar.header("🎯 Sélection des Fonds")
+st.sidebar.header("Selection des Fonds")
 
-# Liste des fonds (exclure benchmark)
-fund_columns = get_fund_columns(df_prices, benchmark_col)
+# Colonnes fonds = tout sauf benchmarks et taux sans risque
+excluded_cols = benchmark_cols + ([rf_column_selected] if rf_column_selected else [])
+fund_columns = [c for c in all_columns if c not in excluded_cols]
 
-# Sélection multiple des fonds
 selected_funds = st.sidebar.multiselect(
-    "Fonds à analyser",
+    "Fonds a analyser",
     options=fund_columns,
-    default=fund_columns[:5] if len(fund_columns) > 5 else fund_columns,
-    help="Sélectionnez les fonds que vous souhaitez comparer"
+    default=fund_columns[:5] if len(fund_columns) > 5 else fund_columns
 )
 
 if not selected_funds:
-    st.warning("⚠️ Veuillez sélectionner au moins un fonds dans la sidebar.")
+    st.warning("Selectionnez au moins un fonds.")
     st.stop()
 
+# --- Afficher les dates d'inception ---
 st.sidebar.divider()
-st.sidebar.header("📅 Période d'Analyse")
+st.sidebar.subheader("Dates d'inception")
 
-# Calculer la plage de dates valide
+inception_df = get_fund_inception_dates(df_prices[selected_funds])
+for _, row in inception_df.iterrows():
+    date_str = row['Date Inception'].strftime('%d/%m/%Y') if pd.notna(row['Date Inception']) else "N/A"
+    col_name = row['Colonne'][:30] + "..." if len(row['Colonne']) > 30 else row['Colonne']
+    st.sidebar.markdown(
+        f"<div class='inception-box'><b>{col_name}</b><br>{date_str}</div>",
+        unsafe_allow_html=True
+    )
+
+# --- Période d'analyse ---
+st.sidebar.divider()
+st.sidebar.header("Periode d'Analyse")
+
 date_min, date_max = get_valid_date_range(df_prices, selected_funds)
+st.sidebar.caption(f"Disponible: {date_min.strftime('%d/%m/%Y')} - {date_max.strftime('%d/%m/%Y')}")
 
-st.sidebar.caption(f"Période disponible: {date_min.strftime('%d/%m/%Y')} - {date_max.strftime('%d/%m/%Y')}")
-
-# Sélection de la période
 col1, col2 = st.sidebar.columns(2)
 with col1:
-    start_date = st.date_input(
-        "Date début",
-        value=date_min,
-        min_value=date_min.date(),
-        max_value=date_max.date()
-    )
+    start_date = st.date_input("Debut", value=date_min, min_value=date_min.date(), max_value=date_max.date())
 with col2:
-    end_date = st.date_input(
-        "Date fin",
-        value=date_max,
-        min_value=date_min.date(),
-        max_value=date_max.date()
-    )
+    end_date = st.date_input("Fin", value=date_max, min_value=date_min.date(), max_value=date_max.date())
 
-# Convertir en Timestamp
 start_date = pd.Timestamp(start_date)
 end_date = pd.Timestamp(end_date)
 
-# Vérifier la validité
 if start_date >= end_date:
-    st.error("❌ La date de début doit être antérieure à la date de fin.")
+    st.error("Date de debut >= date de fin")
     st.stop()
 
 
@@ -262,14 +220,13 @@ if start_date >= end_date:
 # FILTRAGE DES DONNEES
 # ==============================================================================
 
-# Colonnes à garder (fonds sélectionnés + benchmark)
-cols_to_keep = list(selected_funds) + [benchmark_col]
-df_filtered = filter_data_by_period(df_prices[cols_to_keep], start_date, end_date)
+# IMPORTANT: Ne garder que les fonds sélectionnés + benchmarks pour les calculs
+# Le taux sans risque est utilisé pour le calcul mais PAS inclus dans le tableau des fonds
+cols_to_keep = list(selected_funds) + benchmark_cols
 
-# Calculer les rendements
+df_filtered = filter_data_by_period(df_prices, start_date, end_date, cols_to_keep)
 df_returns = calculate_returns(df_filtered)
 
-# Supprimer les lignes avec trop de NaN
 df_filtered = df_filtered.dropna(how='all')
 df_returns = df_returns.dropna(how='all')
 
@@ -281,7 +238,7 @@ df_returns = df_returns.dropna(how='all')
 indicators_df = calculate_all_indicators(
     prices=df_filtered,
     returns=df_returns,
-    benchmark_col=benchmark_col,
+    benchmark_cols=benchmark_cols,
     risk_free_rate=risk_free_rate
 )
 
@@ -290,12 +247,11 @@ indicators_df = calculate_all_indicators(
 # TABS PRINCIPAUX
 # ==============================================================================
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📊 Vue Globale",
-    "📈 Performance",
-    "⚠️ Risque",
-    "🏆 vs Benchmark",
-    "📚 Explications"
+tab1, tab2, tab3, tab4 = st.tabs([
+    "Vue Globale",
+    "Performance",
+    "Risque",
+    "vs Benchmark"
 ])
 
 
@@ -310,72 +266,48 @@ with tab1:
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric(
-            "Nb Fonds Analysés",
-            len(selected_funds),
-            help="Nombre de fonds sélectionnés"
-        )
-    
+        st.metric("Nb Fonds", len(selected_funds))
     with col2:
         avg_sharpe = indicators_df['Sharpe Ratio'].mean()
-        st.metric(
-            "Sharpe Moyen",
-            f"{avg_sharpe:.2f}",
-            help="Moyenne des ratios de Sharpe"
-        )
-    
+        st.metric("Sharpe Moyen", f"{avg_sharpe:.2f}")
     with col3:
         best_return = indicators_df['Rendement Annualise (%)'].max()
-        st.metric(
-            "Meilleur Rendement",
-            f"{best_return:.1f}%",
-            help="Meilleur rendement annualisé"
-        )
-    
+        st.metric("Meilleur Rdt", f"{best_return:.1f}%")
     with col4:
         worst_dd = indicators_df['Max Drawdown (%)'].min()
-        st.metric(
-            "Pire Drawdown",
-            f"{worst_dd:.1f}%",
-            delta_color="inverse",
-            help="Pire drawdown parmi les fonds"
-        )
+        st.metric("Pire Drawdown", f"{worst_dd:.1f}%")
     
     st.divider()
     
     # Tableau des indicateurs
-    st.subheader("Tableau Récapitulatif")
+    st.subheader("Tableau Recapitulatif")
     
-    # Sélection des colonnes à afficher
     col_categories = {
         "Rendements": ['Rendement Annualise (%)', 'Rendement 1Y (%)', 'Rendement 3Y (%)', 'Rendement 5Y (%)', 'Rendement Cumule (%)'],
-        "Volatilité": ['Volatilite (%)', 'Volatilite 1Y (%)', 'Volatilite 3Y (%)', 'Volatilite 5Y (%)'],
+        "Volatilite": ['Volatilite (%)', 'Volatilite 1Y (%)', 'Volatilite 3Y (%)', 'Volatilite 5Y (%)'],
         "Ratios": ['Sharpe Ratio', 'Sharpe 1Y', 'Sharpe 3Y', 'Sharpe 5Y', 'Sortino Ratio', 'Calmar Ratio', 'Omega Ratio'],
         "Risque": ['Max Drawdown (%)', 'Semi-Variance', 'Beta'],
-        "Benchmark": ['Alpha (%)', '% Bat le Benchmark']
+        "Benchmark": ['Alpha (%)', 'Nb Fois Bat Benchmark', 'Total Observations']
     }
     
     selected_categories = st.multiselect(
-        "Catégories d'indicateurs à afficher",
+        "Categories a afficher",
         options=list(col_categories.keys()),
-        default=["Rendements", "Volatilité", "Ratios"],
-        help="Sélectionnez les catégories d'indicateurs à afficher dans le tableau"
+        default=["Rendements", "Ratios", "Benchmark"]
     )
     
-    # Construire la liste des colonnes à afficher
     cols_to_show = ['Fonds']
     for cat in selected_categories:
         cols_to_show.extend([c for c in col_categories[cat] if c in indicators_df.columns])
     
-    # Formatter le dataframe pour l'affichage
-    df_display = indicators_df[cols_to_show].copy()
+    df_display = indicators_df[[c for c in cols_to_show if c in indicators_df.columns]].copy()
     
-    # Style conditionnel
+    # Style
     def highlight_best(s):
-        if s.name in ['Sharpe Ratio', 'Sharpe 1Y', 'Sharpe 3Y', 'Sharpe 5Y', 
-                      'Sortino Ratio', 'Rendement Annualise (%)', 'Rendement 1Y (%)',
-                      'Rendement 3Y (%)', 'Rendement 5Y (%)', 'Rendement Cumule (%)',
-                      'Alpha (%)', 'Calmar Ratio', 'Omega Ratio', '% Bat le Benchmark']:
+        if s.name in ['Sharpe Ratio', 'Sharpe 1Y', 'Sharpe 3Y', 'Sharpe 5Y', 'Sortino Ratio',
+                      'Rendement Annualise (%)', 'Rendement 1Y (%)', 'Rendement 3Y (%)', 
+                      'Rendement 5Y (%)', 'Rendement Cumule (%)', 'Alpha (%)', 
+                      'Calmar Ratio', 'Omega Ratio', 'Nb Fois Bat Benchmark']:
             is_max = s == s.max()
             return ['background-color: #90EE90' if v else '' for v in is_max]
         elif s.name in ['Max Drawdown (%)', 'Volatilite (%)', 'Volatilite 1Y (%)',
@@ -384,30 +316,27 @@ with tab1:
             return ['background-color: #90EE90' if v else '' for v in is_min]
         return ['' for _ in s]
     
-    # Créer le format dict dynamiquement
     format_dict = {}
     for col in df_display.columns:
         if col == 'Fonds':
             continue
-        elif 'Sharpe' in col or 'Sortino' in col or 'Calmar' in col or 'Omega' in col or 'Beta' in col:
+        elif any(x in col for x in ['Sharpe', 'Sortino', 'Calmar', 'Omega', 'Beta']):
             format_dict[col] = '{:.3f}'
         elif 'Semi-Variance' in col:
             format_dict[col] = '{:.6f}'
+        elif col in ['Nb Fois Bat Benchmark', 'Total Observations']:
+            format_dict[col] = '{:.0f}'
         elif '%' in col:
-            format_dict[col] = '{:.2f}%'
+            format_dict[col] = '{:.2f}'
     
     styled_df = df_display.style.apply(highlight_best).format(format_dict, na_rep="-")
-    
     st.dataframe(styled_df, use_container_width=True, hide_index=True)
     
-    # Download button
+    # Download
     csv = indicators_df.to_csv(index=False)
-    st.download_button(
-        label="📥 Télécharger les indicateurs (CSV)",
-        data=csv,
-        file_name=f"indicateurs_fonds_{datetime.now().strftime('%Y%m%d')}.csv",
-        mime="text/csv"
-    )
+    st.download_button("Telecharger CSV", data=csv, 
+                       file_name=f"indicateurs_{datetime.now().strftime('%Y%m%d')}.csv", 
+                       mime="text/csv")
 
 
 # ==============================================================================
@@ -417,50 +346,33 @@ with tab1:
 with tab2:
     st.header("Analyse de Performance")
     
-    # Graphique des prix normalisés
+    # Prix normalisés
     st.subheader("Evolution des Prix (Base 100)")
-    fig_prices = plot_normalized_prices(
-        df_filtered,
-        benchmark_col=benchmark_col,
-        title=""
-    )
+    cols_for_chart = selected_funds + benchmark_cols
+    fig_prices = plot_normalized_prices(df_filtered[cols_for_chart], benchmark_cols=benchmark_cols, title="")
     st.plotly_chart(fig_prices, use_container_width=True)
     
     st.divider()
     
-    # Scatter Rendement vs Volatilité
+    # Bar charts rendements
     col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("Rendement vs Risque")
-        fig_scatter = plot_risk_return_scatter(
-            indicators_df,
-            x_col="Volatilite (%)",
-            y_col="Rendement Annualise (%)",
-            title=""
-        )
-        st.plotly_chart(fig_scatter, use_container_width=True)
+        st.subheader("Rendement Annualise")
+        fig_ret = plot_indicator_bar_chart(indicators_df, "Rendement Annualise (%)", title="")
+        st.plotly_chart(fig_ret, use_container_width=True)
     
     with col2:
-        st.subheader("Comparaison des Rendements")
-        fig_return = plot_indicator_comparison(
-            indicators_df,
-            "Rendement Annualise (%)",
-            title=""
-        )
-        st.plotly_chart(fig_return, use_container_width=True)
+        st.subheader("Sharpe Ratio")
+        fig_sharpe = plot_indicator_bar_chart(indicators_df, "Sharpe Ratio", title="")
+        st.plotly_chart(fig_sharpe, use_container_width=True)
     
     st.divider()
     
-    # Sharpe glissant
-    st.subheader("Sharpe Ratio Glissant (3 mois)")
-    fig_rolling = plot_rolling_sharpe(
-        df_returns[selected_funds],
-        window=63,
-        risk_free_rate=risk_free_rate,
-        title=""
-    )
-    st.plotly_chart(fig_rolling, use_container_width=True)
+    # Rendement vs Risque scatter
+    st.subheader("Rendement vs Risque")
+    fig_scatter = plot_risk_return_scatter(indicators_df)
+    st.plotly_chart(fig_scatter, use_container_width=True)
 
 
 # ==============================================================================
@@ -471,11 +383,8 @@ with tab3:
     st.header("Analyse de Risque")
     
     # Drawdown
-    st.subheader("Drawdown dans le Temps")
-    fig_dd = plot_drawdown(
-        df_filtered[selected_funds],
-        title=""
-    )
+    st.subheader("Drawdown")
+    fig_dd = plot_drawdown(df_filtered[selected_funds], title="")
     st.plotly_chart(fig_dd, use_container_width=True)
     
     st.divider()
@@ -483,33 +392,20 @@ with tab3:
     col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("Comparaison Max Drawdown")
-        fig_mdd = plot_indicator_comparison(
-            indicators_df,
-            "Max Drawdown (%)",
-            title=""
-        )
+        st.subheader("Max Drawdown")
+        fig_mdd = plot_indicator_bar_chart(indicators_df, "Max Drawdown (%)", title="", reverse_colors=True)
         st.plotly_chart(fig_mdd, use_container_width=True)
     
     with col2:
-        st.subheader("Comparaison Volatilité")
-        fig_vol = plot_indicator_comparison(
-            indicators_df,
-            "Volatilite (%)",
-            title=""
-        )
+        st.subheader("Volatilite")
+        fig_vol = plot_indicator_bar_chart(indicators_df, "Volatilite (%)", title="", reverse_colors=True)
         st.plotly_chart(fig_vol, use_container_width=True)
     
     st.divider()
     
-    # Matrice de corrélation
-    st.subheader("Matrice de Corrélation")
-    st.caption("Permet de voir quels fonds évoluent ensemble (diversification)")
-    
-    fig_corr = plot_correlation_matrix(
-        df_returns[selected_funds],
-        title=""
-    )
+    # Corrélation
+    st.subheader("Matrice de Correlation")
+    fig_corr = plot_correlation_matrix(df_returns[selected_funds], title="")
     st.plotly_chart(fig_corr, use_container_width=True)
 
 
@@ -518,138 +414,47 @@ with tab3:
 # ==============================================================================
 
 with tab4:
-    st.header("Comparaison avec le Benchmark")
-    st.caption(f"Benchmark utilisé: {benchmark_col}")
+    st.header("Comparaison avec le(s) Benchmark(s)")
     
-    # Surperformance cumulée
-    st.subheader("Surperformance Cumulée")
-    fig_outperf = plot_benchmark_comparison(
-        df_returns,
-        benchmark_col=benchmark_col,
-        title=""
-    )
-    st.plotly_chart(fig_outperf, use_container_width=True)
-    
-    st.divider()
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("Alpha (surperformance ajustée)")
-        if 'Alpha (%)' in indicators_df.columns:
-            fig_alpha = plot_indicator_comparison(
-                indicators_df,
-                "Alpha (%)",
-                title=""
-            )
-            st.plotly_chart(fig_alpha, use_container_width=True)
-    
-    with col2:
-        st.subheader("% Périodes Battant le Benchmark")
-        if '% Bat le Benchmark' in indicators_df.columns:
-            fig_beats = plot_indicator_comparison(
-                indicators_df,
-                "% Bat le Benchmark",
-                title=""
-            )
-            st.plotly_chart(fig_beats, use_container_width=True)
-    
-    st.divider()
-    
-    # Beta
-    st.subheader("Beta (sensibilité au marché)")
-    if 'Beta' in indicators_df.columns:
-        col1, col2, col3 = st.columns([1, 2, 1])
+    if not benchmark_cols:
+        st.warning("Aucun benchmark selectionne. Retournez dans la sidebar pour en choisir un.")
+    else:
+        # Sélectionner le benchmark à afficher
+        if len(benchmark_cols) > 1:
+            selected_bench = st.selectbox("Benchmark a afficher", benchmark_cols)
+        else:
+            selected_bench = benchmark_cols[0]
+        
+        st.caption(f"Benchmark: {selected_bench}")
+        
+        # Surperformance
+        st.subheader("Surperformance Cumulee")
+        fig_outperf = plot_benchmark_comparison(df_returns, benchmark_col=selected_bench, title="")
+        st.plotly_chart(fig_outperf, use_container_width=True)
+        
+        st.divider()
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("Alpha")
+            if 'Alpha (%)' in indicators_df.columns:
+                fig_alpha = plot_indicator_bar_chart(indicators_df, "Alpha (%)", title="")
+                st.plotly_chart(fig_alpha, use_container_width=True)
+        
         with col2:
-            fig_beta = plot_indicator_comparison(
-                indicators_df,
-                "Beta",
-                title=""
-            )
+            st.subheader("Nb Fois Bat le Benchmark")
+            if 'Nb Fois Bat Benchmark' in indicators_df.columns:
+                fig_beats = plot_indicator_bar_chart(indicators_df, "Nb Fois Bat Benchmark", title="")
+                st.plotly_chart(fig_beats, use_container_width=True)
+        
+        st.divider()
+        
+        # Beta
+        st.subheader("Beta")
+        if 'Beta' in indicators_df.columns:
+            fig_beta = plot_indicator_bar_chart(indicators_df, "Beta", title="")
             st.plotly_chart(fig_beta, use_container_width=True)
-
-
-# ==============================================================================
-# TAB 5: EXPLICATIONS
-# ==============================================================================
-
-with tab5:
-    st.header("📚 Guide des Indicateurs")
-    st.caption("Explications simples pour comprendre chaque indicateur")
-    
-    explanations = {
-        "Rendement Annualisé": {
-            "formule": "(1 + rendement_total)^(252/n_jours) - 1",
-            "explication": "Combien tu gagnes en moyenne par an si tu gardes ton placement. C'est le premier indicateur à regarder, mais attention, il ne dit rien sur le risque pris pour l'obtenir.",
-            "interpretation": "Plus c'est haut, mieux c'est. Un rendement de 8% signifie que 100€ investis deviennent 108€ en un an."
-        },
-        "Rendement 1Y / 3Y / 5Y": {
-            "formule": "Même formule mais sur les 1, 3 ou 5 dernières années",
-            "explication": "Permet de voir si le fonds performe bien sur différents horizons de temps. Un fonds peut être bon sur 1 an mais mauvais sur 5 ans (ou l'inverse).",
-            "interpretation": "Compare les rendements sur différentes périodes. Si 1Y >> 5Y, le fonds s'est amélioré récemment. Si 1Y << 5Y, il a peut-être des difficultés."
-        },
-        "Volatilité": {
-            "formule": "écart-type des rendements × √252",
-            "explication": "Est-ce que le fonds fait les montagnes russes ou c'est tranquille ? La volatilité mesure l'amplitude des variations quotidiennes.",
-            "interpretation": "Plus c'est bas, plus c'est stable. Une vol de 15% signifie que le fonds peut facilement varier de +15% ou -15% sur l'année."
-        },
-        "Volatilité 1Y / 3Y / 5Y": {
-            "formule": "Même formule mais sur les 1, 3 ou 5 dernières années",
-            "explication": "Permet de voir si le fonds est devenu plus ou moins risqué au fil du temps.",
-            "interpretation": "Si Vol 1Y < Vol 5Y, le fonds s'est calmé récemment. Si Vol 1Y > Vol 5Y, il est devenu plus nerveux."
-        },
-        "Sharpe Ratio": {
-            "formule": "(rendement - taux sans risque) / volatilité",
-            "explication": "Est-ce que le risque pris en valait la peine ? C'est le rendement que tu obtiens pour chaque unité de risque. C'est l'indicateur roi en gestion de portefeuille.",
-            "interpretation": "< 0 : mauvais | 0-1 : moyen | 1-2 : bon | > 2 : excellent"
-        },
-        "Sortino Ratio": {
-            "formule": "(rendement - taux sans risque) / volatilité négative",
-            "explication": "Comme le Sharpe mais on punit seulement les baisses, pas les hausses. C'est plus juste parce qu'on s'en fiche si le fonds monte beaucoup !",
-            "interpretation": "Mêmes seuils que le Sharpe. Souvent plus élevé car il ignore la 'bonne' volatilité."
-        },
-        "Max Drawdown": {
-            "formule": "(creux - pic) / pic",
-            "explication": "La pire dégringolade qu'on aurait pu subir si on avait acheté au pire moment. C'est le scénario catastrophe.",
-            "interpretation": "-20% signifie que dans le pire des cas, tu aurais perdu 20% de ton investissement avant que ça remonte."
-        },
-        "Beta": {
-            "formule": "Cov(fonds, marché) / Var(marché)",
-            "explication": "Quand le marché bouge de 1%, le fonds bouge de combien ?",
-            "interpretation": "Beta = 1 : pareil que le marché | Beta > 1 : plus nerveux | Beta < 1 : plus calme"
-        },
-        "Alpha": {
-            "formule": "Rendement - (Rf + Beta × (Rm - Rf))",
-            "explication": "Le petit plus (ou moins) que le gérant apporte par rapport à ce qu'on attendait vu le risque pris.",
-            "interpretation": "Positif = le gérant crée de la valeur. Négatif = autant acheter l'indice."
-        },
-        "Calmar Ratio": {
-            "formule": "rendement annualisé / |max drawdown|",
-            "explication": "Le rendement par rapport à la pire chute subie. Combine performance et risque extrême.",
-            "interpretation": "> 1 signifie que ton rendement annuel est supérieur à ta pire perte. Plus c'est haut, mieux c'est."
-        },
-        "Omega Ratio": {
-            "formule": "Σ gains au-dessus du seuil / Σ pertes en-dessous",
-            "explication": "Pour chaque euro que tu risques de perdre, combien tu peux gagner ? Prend en compte toute la distribution des rendements.",
-            "interpretation": "Omega > 1 = tu gagnes plus que tu perds en moyenne. Plus c'est haut, mieux c'est."
-        },
-        "% Bat le Benchmark": {
-            "formule": "Nb(jours où fonds > benchmark) / Nb(jours total)",
-            "explication": "Sur 100 jours, combien de fois le fonds a fait mieux que le marché ?",
-            "interpretation": "50% = pareil que le marché. > 50% = le fonds surperforme régulièrement."
-        },
-        "Taux Sans Risque (Euribor)": {
-            "formule": "Taux interbancaire européen",
-            "explication": "C'est le rendement qu'on peut obtenir 'sans risque' (en théorie). On l'utilise comme référence : si un fonds fait moins bien que l'Euribor, autant laisser son argent à la banque !",
-            "interpretation": "L'Euribor 3M est le taux auquel les banques se prêtent entre elles sur 3 mois. Il varie selon la politique de la BCE."
-        }
-    }
-    
-    for indicator, details in explanations.items():
-        with st.expander(f"📌 {indicator}"):
-            st.markdown(f"**Formule:** `{details['formule']}`")
-            st.markdown(f"**Explication:** {details['explication']}")
-            st.info(f"**Interprétation:** {details['interpretation']}")
 
 
 # ==============================================================================
@@ -658,8 +463,11 @@ with tab5:
 
 st.divider()
 st.caption(f"""
-📊 Dashboard Analyse Fonds Large Cap | 
-Période: {start_date.strftime('%d/%m/%Y')} - {end_date.strftime('%d/%m/%Y')} | 
-Taux sans risque: {risk_free_rate*100:.1f}% | 
-Généré le {datetime.now().strftime('%d/%m/%Y à %H:%M')}
+Dashboard Analyse Fonds Large Cap | 
+Periode: {start_date.strftime('%d/%m/%Y')} - {end_date.strftime('%d/%m/%Y')} | 
+Taux sans risque: {risk_free_rate*100:.2f}% | 
+Genere le {datetime.now().strftime('%d/%m/%Y a %H:%M')}
 """)
+
+
+

@@ -5,15 +5,8 @@
 # Chemin vers le fichier de données
 DATA_PATH = "data/fonds_data.xlsx"
 
-# Nom de la colonne benchmark dans ton fichier
-BENCHMARK_COLUMN = "Benchmark"
-
 # Nom de la colonne date
-DATE_COLUMN = "Date"
-
-# Taux sans risque par défaut (annualisé, en décimal)
-# 3% = 0.03
-DEFAULT_RISK_FREE_RATE = 0.03
+DATE_COLUMN = "Dates"
 
 # Nombre de jours de trading par an (pour annualisation)
 TRADING_DAYS_PER_YEAR = 252
