@@ -1,5 +1,5 @@
 # ==============================================================================
-# CHARTS - Fonctions de visualisation V2
+# CHARTS - Fonctions de visualisation V2 FINAL
 # ==============================================================================
 
 import pandas as pd
@@ -124,7 +124,6 @@ def plot_indicator_bar_chart(
         fig.add_annotation(text="Pas de donnees", xref="paper", yref="paper", x=0.5, y=0.5)
         return fig
     
-    # Couleurs basees sur le rang
     n = len(df_sorted)
     if reverse_colors:
         colors = [COLORS[i % len(COLORS)] for i in range(n)]
@@ -205,18 +204,7 @@ def plot_radar_chart(
     metrics: list = None,
     title: str = None
 ) -> go.Figure:
-    """
-    Radar chart pour visualiser le profil d'un fonds.
-    
-    Parameters
-    ----------
-    indicators_df : pd.DataFrame
-        DataFrame des indicateurs
-    fund_name : str
-        Nom du fonds a afficher
-    metrics : list, optional
-        Liste des metriques a inclure
-    """
+    """Radar chart pour visualiser le profil d'un seul fonds."""
     if metrics is None:
         metrics = [
             'Rendement Annualise (%)',
@@ -225,7 +213,6 @@ def plot_radar_chart(
             'Alpha (%)',
             'ESG Score'
         ]
-        # Ajouter les metriques inversees (ou lower = better)
         metrics_lower = ['Volatilite (%)', 'Max Drawdown (%)', 'Frais (%)']
     else:
         metrics_lower = []
@@ -241,7 +228,6 @@ def plot_radar_chart(
     
     fund_row = fund_row.iloc[0]
     
-    # Normaliser les valeurs sur 0-100 pour chaque metrique
     values = []
     labels = []
     
@@ -253,12 +239,10 @@ def plot_radar_chart(
             val = fund_row[metric]
             
             if pd.notna(val) and col_values.std() > 0:
-                # Normaliser entre 0 et 100
                 min_val = col_values.min()
                 max_val = col_values.max()
                 
                 if metric in metrics_lower:
-                    # Inverser pour les metriques ou lower = better
                     normalized = 100 - ((val - min_val) / (max_val - min_val) * 100) if max_val != min_val else 50
                 else:
                     normalized = ((val - min_val) / (max_val - min_val) * 100) if max_val != min_val else 50
@@ -271,7 +255,6 @@ def plot_radar_chart(
         fig.add_annotation(text="Pas assez de donnees", xref="paper", yref="paper", x=0.5, y=0.5)
         return fig
     
-    # Fermer le radar
     values.append(values[0])
     labels.append(labels[0])
     
@@ -305,15 +288,28 @@ def plot_radar_chart(
     return fig
 
 
-def plot_radar_comparison(
+def plot_radar_multi_funds(
     indicators_df: pd.DataFrame,
     fund_names: list,
     metrics: list = None,
     title: str = "Comparaison des fonds"
 ) -> go.Figure:
-    """Radar chart comparant plusieurs fonds."""
+    """
+    Radar chart comparant plusieurs fonds selectionnes.
+    """
     if metrics is None:
-        metrics = ['Rendement Annualise (%)', 'Sharpe Ratio', 'Alpha (%)', 'ESG Score']
+        metrics = ['Rendement Annualise (%)', 'Sharpe Ratio', 'Alpha (%)', 'ESG Score', 'Omega vs Benchmark']
+    
+    # Filtrer les metriques disponibles
+    available_metrics = [m for m in metrics if m in indicators_df.columns and indicators_df[m].notna().sum() > 0]
+    
+    if len(available_metrics) < 3:
+        fig = go.Figure()
+        fig.add_annotation(text="Pas assez de metriques disponibles", xref="paper", yref="paper", x=0.5, y=0.5)
+        return fig
+    
+    # Metriques ou lower = better
+    lower_is_better = ['Volatilite (%)', 'Max Drawdown (%)', 'Frais (%)', 'Semi-Variance', 'Tracking Error (%)']
     
     fig = go.Figure()
     
@@ -326,19 +322,27 @@ def plot_radar_comparison(
         values = []
         labels = []
         
-        for metric in metrics:
-            if metric in indicators_df.columns:
-                col_values = pd.to_numeric(indicators_df[metric], errors='coerce')
-                val = fund_row[metric]
+        for metric in available_metrics:
+            col_values = pd.to_numeric(indicators_df[metric], errors='coerce')
+            val = fund_row[metric]
+            
+            if pd.notna(val) and col_values.std() > 0:
+                min_val = col_values.min()
+                max_val = col_values.max()
                 
-                if pd.notna(val) and col_values.std() > 0:
-                    min_val = col_values.min()
-                    max_val = col_values.max()
+                # Inverser pour les metriques ou lower = better
+                if metric in lower_is_better:
+                    normalized = 100 - ((val - min_val) / (max_val - min_val) * 100) if max_val != min_val else 50
+                else:
                     normalized = ((val - min_val) / (max_val - min_val) * 100) if max_val != min_val else 50
-                    values.append(normalized)
-                    labels.append(metric.replace(' (%)', '').replace(' Ratio', ''))
+                
+                values.append(normalized)
+                # Raccourcir les noms
+                label = metric.replace(' (%)', '').replace(' Ratio', '').replace('Annualise', 'Ann.').replace('Benchmark', 'Bench')
+                labels.append(label)
         
         if len(values) > 0:
+            # Fermer le radar
             values.append(values[0])
             labels.append(labels[0])
             
@@ -348,19 +352,43 @@ def plot_radar_comparison(
                 fill='toself',
                 name=fund_name[:20],
                 line=dict(color=COLORS[i % len(COLORS)], width=2),
-                fillcolor=f"rgba{tuple(list(int(COLORS[i % len(COLORS)].lstrip('#')[j:j+2], 16) for j in (0, 2, 4)) + [0.2])}"
+                opacity=0.7
             ))
     
     fig.update_layout(
         polar=dict(
-            radialaxis=dict(visible=True, range=[0, 100])
+            radialaxis=dict(
+                visible=True,
+                range=[0, 100],
+                tickfont=dict(size=9)
+            ),
+            angularaxis=dict(
+                tickfont=dict(size=10, color="#412761")
+            )
         ),
         showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=-0.2,
+            xanchor="center",
+            x=0.5
+        ),
         title=dict(text=title, x=0.5, font=dict(size=16, color="#412761")),
-        height=500
+        height=550
     )
     
     return fig
+
+
+def plot_radar_comparison(
+    indicators_df: pd.DataFrame,
+    fund_names: list,
+    metrics: list = None,
+    title: str = "Comparaison des fonds"
+) -> go.Figure:
+    """Alias pour plot_radar_multi_funds."""
+    return plot_radar_multi_funds(indicators_df, fund_names, metrics, title)
 
 
 def plot_benchmark_comparison(
@@ -454,15 +482,14 @@ def plot_score_composite_bar(
         'Score Composite (0-100)', ascending=True
     )
     
-    # Couleurs en degrade selon le score
     colors = []
     for score in df_sorted['Score Composite (0-100)']:
         if score >= 70:
-            colors.append("#007078")  # bleu-vert (bon)
+            colors.append("#007078")
         elif score >= 50:
-            colors.append("#F8AF00")  # jaune (moyen)
+            colors.append("#F8AF00")
         else:
-            colors.append("#B10967")  # rose (mauvais)
+            colors.append("#B10967")
     
     fig = go.Figure()
     

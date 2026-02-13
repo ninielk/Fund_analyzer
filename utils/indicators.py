@@ -1,5 +1,5 @@
 # ==============================================================================
-# INDICATORS - Calcul de tous les indicateurs de performance V2 CORRIGE
+# INDICATORS - Calcul de tous les indicateurs de performance V2 FINAL
 # ==============================================================================
 
 import pandas as pd
@@ -181,17 +181,35 @@ def tracking_error(returns: pd.Series, benchmark_returns: pd.Series) -> float:
     return te
 
 
-def information_ratio(returns: pd.Series, benchmark_returns: pd.Series, risk_free_rate: float = 0.03) -> float:
+def information_ratio(returns: pd.Series, benchmark_returns: pd.Series) -> float:
     """
-    Information Ratio = Alpha / Tracking Error.
+    Information Ratio = Rendement exces annualise / Tracking Error.
+    
+    FORMULE CORRECTE:
+    IR = (Rendement_fonds_annualise - Rendement_bench_annualise) / Tracking_Error
+    
+    C'est le rendement excedentaire par unite de risque actif (tracking error).
     """
-    alpha_val = alpha(returns, benchmark_returns, risk_free_rate)
-    te = tracking_error(returns, benchmark_returns)
+    aligned = pd.concat([returns, benchmark_returns], axis=1).dropna()
+    
+    if len(aligned) < 10:
+        return np.nan
+    
+    fund_ret = aligned.iloc[:, 0]
+    bench_ret = aligned.iloc[:, 1]
+    
+    # Rendement excedentaire annualise
+    ann_ret_fund = annualized_return(fund_ret)
+    ann_ret_bench = annualized_return(bench_ret)
+    excess_return = ann_ret_fund - ann_ret_bench
+    
+    # Tracking error
+    te = tracking_error(fund_ret, bench_ret)
     
     if pd.isna(te) or te == 0:
         return np.nan
     
-    return alpha_val / te
+    return excess_return / te
 
 
 def treynor_ratio(returns: pd.Series, benchmark_returns: pd.Series, risk_free_rate: float = 0.03) -> float:
@@ -207,8 +225,44 @@ def treynor_ratio(returns: pd.Series, benchmark_returns: pd.Series, risk_free_ra
     return (ann_ret - risk_free_rate) / beta_val
 
 
+def omega_vs_benchmark(returns: pd.Series, benchmark_returns: pd.Series) -> float:
+    """
+    Omega Ratio vs Benchmark.
+    
+    FORMULE:
+    Omega_vs_Bench = Sum(surperformance quand fonds > bench) / Sum(sous-performance quand fonds < bench)
+    
+    C'est combien tu gagnes vs le benchmark pour chaque euro que tu perds vs le benchmark.
+    > 1 = tu surperformes plus souvent/fort que tu sous-performes
+    """
+    aligned = pd.concat([returns, benchmark_returns], axis=1).dropna()
+    
+    if len(aligned) < 10:
+        return np.nan
+    
+    fund_ret = aligned.iloc[:, 0]
+    bench_ret = aligned.iloc[:, 1]
+    
+    # Rendement excedentaire quotidien
+    excess = fund_ret - bench_ret
+    
+    # Jours de surperformance (gains vs benchmark)
+    outperformance = excess[excess > 0]
+    
+    # Jours de sous-performance (pertes vs benchmark)
+    underperformance = -excess[excess < 0]  # On prend la valeur absolue
+    
+    sum_outperf = outperformance.sum() if len(outperformance) > 0 else 0
+    sum_underperf = underperformance.sum() if len(underperformance) > 0 else 0
+    
+    if sum_underperf == 0:
+        return np.inf if sum_outperf > 0 else np.nan
+    
+    return sum_outperf / sum_underperf
+
+
 # ==============================================================================
-# NOUVEAU CALCUL : BAT BENCHMARK GLISSANT JOURNALIER (1Y/3Y/5Y)
+# BAT BENCHMARK GLISSANT JOURNALIER - VERSION OPTIMISEE
 # ==============================================================================
 
 def bat_benchmark_rolling(
@@ -230,7 +284,6 @@ def bat_benchmark_rolling(
         return np.nan, np.nan, np.nan
     
     # Calculer les rendements sur horizon_years en vectorise
-    # On utilise shift pour decaler les prix de n_days
     fund_past = aligned['fund'].shift(n_days)
     bench_past = aligned['bench'].shift(n_days)
     
@@ -238,7 +291,7 @@ def bat_benchmark_rolling(
     ret_fund = (aligned['fund'] - fund_past) / fund_past
     ret_bench = (aligned['bench'] - bench_past) / bench_past
     
-    # Supprimer les NaN (debut de serie)
+    # Supprimer les NaN
     valid_mask = ret_fund.notna() & ret_bench.notna()
     ret_fund = ret_fund[valid_mask]
     ret_bench = ret_bench[valid_mask]
@@ -296,7 +349,7 @@ def sharpe_period(returns: pd.Series, years: int, risk_free_rate: float = 0.03) 
 
 
 # ==============================================================================
-# FONCTION PRINCIPALE - CALCUL POUR UN BENCHMARK DONNE
+# FONCTION PRINCIPALE
 # ==============================================================================
 
 def calculate_all_indicators(
@@ -357,10 +410,11 @@ def calculate_all_indicators(
             indicators['Beta'] = beta(fund_returns, bench_returns)
             indicators['Alpha (%)'] = alpha(fund_returns, bench_returns, risk_free_rate) * 100
             indicators['Tracking Error (%)'] = tracking_error(fund_returns, bench_returns) * 100
-            indicators['Information Ratio'] = information_ratio(fund_returns, bench_returns, risk_free_rate)
+            indicators['Information Ratio'] = information_ratio(fund_returns, bench_returns)
             indicators['Treynor Ratio'] = treynor_ratio(fund_returns, bench_returns, risk_free_rate)
+            indicators['Omega vs Benchmark'] = omega_vs_benchmark(fund_returns, bench_returns)
             
-            # Bat Benchmark - nouveau calcul glissant journalier
+            # Bat Benchmark glissant
             nb_1y, obs_1y, pct_1y = bat_benchmark_rolling(fund_prices, bench_prices, 1)
             nb_3y, obs_3y, pct_3y = bat_benchmark_rolling(fund_prices, bench_prices, 3)
             nb_5y, obs_5y, pct_5y = bat_benchmark_rolling(fund_prices, bench_prices, 5)
@@ -380,7 +434,7 @@ def calculate_all_indicators(
 
 
 # ==============================================================================
-# SCORE COMPOSITE AVEC PONDERATION
+# SCORE COMPOSITE
 # ==============================================================================
 
 def calculate_composite_score(
@@ -409,7 +463,7 @@ def calculate_composite_score(
             'lower_better': ['Volatilite (%)', 'Max Drawdown (%)', 'Semi-Variance']
         },
         'Benchmark': {
-            'higher_better': ['Alpha (%)', 'Information Ratio', 'Treynor Ratio', 'Bat Bench 1Y (%)'],
+            'higher_better': ['Alpha (%)', 'Information Ratio', 'Treynor Ratio', 'Bat Bench 1Y (%)', 'Omega vs Benchmark'],
             'lower_better': []
         },
         'ESG': {

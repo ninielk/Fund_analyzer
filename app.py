@@ -1,5 +1,5 @@
 # ==============================================================================
-# DASHBOARD ANALYSE FONDS LARGE CAP - V2 CORRIGE
+# DASHBOARD ANALYSE FONDS LARGE CAP - V2 FINAL
 # ==============================================================================
 
 import streamlit as st
@@ -31,6 +31,7 @@ from utils.charts import (
     plot_indicator_bar_chart,
     plot_risk_return_scatter,
     plot_radar_chart,
+    plot_radar_multi_funds,
     plot_benchmark_comparison,
     plot_correlation_matrix
 )
@@ -176,7 +177,7 @@ if not selected_funds:
 
 # Dates d'inception
 st.sidebar.divider()
-st.sidebar.subheader("Dates d'inception")
+st.sidebar.subheader("Dates de démarrage")
 
 inception_df = get_fund_inception_dates(df_prices[selected_funds])
 for _, row in inception_df.iterrows():
@@ -293,7 +294,7 @@ with tab1:
         "Volatilite": ['Volatilite (%)', 'Volatilite 1Y (%)', 'Volatilite 3Y (%)', 'Volatilite 5Y (%)'],
         "Ratios": ['Sharpe Ratio', 'Sortino Ratio', 'Calmar Ratio', 'Omega Ratio', 'Information Ratio', 'Treynor Ratio'],
         "Risque": ['Max Drawdown (%)', 'Semi-Variance', 'Beta', 'Tracking Error (%)'],
-        "Benchmark": ['Alpha (%)', 'Bat Bench 1Y (%)', 'Bat Bench 3Y (%)', 'Bat Bench 5Y (%)'],
+        "Benchmark": ['Alpha (%)', 'Omega vs Benchmark', 'Bat Bench 1Y (%)', 'Bat Bench 3Y (%)', 'Bat Bench 5Y (%)'],
         "ESG & Frais": ['ESG Score', 'Frais (%)']
     }
     
@@ -313,7 +314,7 @@ with tab1:
         higher_better = ['Sharpe Ratio', 'Sortino Ratio', 'Rendement Annualise (%)', 'Rendement 1Y (%)',
                         'Rendement 3Y (%)', 'Rendement 5Y (%)', 'Alpha (%)', 'Calmar Ratio', 
                         'Omega Ratio', 'Information Ratio', 'Treynor Ratio', 'ESG Score',
-                        'Bat Bench 1Y (%)', 'Bat Bench 3Y (%)', 'Bat Bench 5Y (%)']
+                        'Bat Bench 1Y (%)', 'Bat Bench 3Y (%)', 'Bat Bench 5Y (%)', 'Omega vs Benchmark']
         lower_better = ['Volatilite (%)', 'Volatilite 1Y (%)', 'Volatilite 3Y (%)', 'Volatilite 5Y (%)',
                        'Max Drawdown (%)', 'Semi-Variance', 'Frais (%)']
         
@@ -505,10 +506,17 @@ with tab4:
                 st.plotly_chart(fig_ir, use_container_width=True)
         
         with col2:
-            st.subheader("Treynor Ratio")
-            if 'Treynor Ratio' in indicators_bench.columns:
-                fig_tr = plot_indicator_bar_chart(indicators_bench, "Treynor Ratio", title="")
-                st.plotly_chart(fig_tr, use_container_width=True)
+            st.subheader("Omega vs Benchmark")
+            if 'Omega vs Benchmark' in indicators_bench.columns:
+                fig_omega_bench = plot_indicator_bar_chart(indicators_bench, "Omega vs Benchmark", title="")
+                st.plotly_chart(fig_omega_bench, use_container_width=True)
+        
+        st.divider()
+        
+        st.subheader("Treynor Ratio")
+        if 'Treynor Ratio' in indicators_bench.columns:
+            fig_tr = plot_indicator_bar_chart(indicators_bench, "Treynor Ratio", title="")
+            st.plotly_chart(fig_tr, use_container_width=True)
 
 
 # ==============================================================================
@@ -516,23 +524,66 @@ with tab4:
 # ==============================================================================
 
 with tab5:
-    st.header("Profil Radar des Fonds")
+    st.header("Comparaison Radar des Fonds")
     
     indicators_radar = st.session_state.get('indicators_df', pd.DataFrame())
     
     if len(indicators_radar) > 0:
-        selected_fund_radar = st.selectbox("Selectionner un fonds", indicators_radar['Fonds'].tolist())
+        # Multi-selection de fonds
+        all_funds = indicators_radar['Fonds'].tolist()
+        selected_funds_radar = st.multiselect(
+            "Selectionner les fonds a comparer",
+            options=all_funds,
+            default=all_funds[:3] if len(all_funds) >= 3 else all_funds,
+            key="radar_funds"
+        )
         
-        available_metrics = []
-        for col in ['Rendement Annualise (%)', 'Sharpe Ratio', 'Sortino Ratio', 'Alpha (%)', 
-                    'ESG Score', 'Volatilite (%)', 'Max Drawdown (%)', 'Frais (%)']:
-            if col in indicators_radar.columns and indicators_radar[col].notna().sum() > 0:
-                available_metrics.append(col)
+        if len(selected_funds_radar) == 0:
+            st.warning("Selectionnez au moins un fonds.")
+        else:
+            # Choix des metriques
+            metric_options = ['Rendement Annualise (%)', 'Sharpe Ratio', 'Sortino Ratio', 
+                           'Alpha (%)', 'Information Ratio', 'Treynor Ratio', 'Omega vs Benchmark',
+                           'ESG Score', 'Volatilite (%)', 'Max Drawdown (%)', 'Frais (%)']
+            
+            available_metrics = []
+            for col in metric_options:
+                if col in indicators_radar.columns and indicators_radar[col].notna().sum() > 0:
+                    available_metrics.append(col)
+            
+            selected_metrics = st.multiselect(
+                "Metriques a afficher",
+                options=available_metrics,
+                default=available_metrics[:5] if len(available_metrics) >= 5 else available_metrics,
+                key="radar_metrics"
+            )
+            
+            if len(selected_metrics) < 3:
+                st.warning("Selectionnez au moins 3 metriques.")
+            else:
+                fig_radar = plot_radar_multi_funds(
+                    indicators_radar, 
+                    selected_funds_radar, 
+                    metrics=selected_metrics,
+                    title=""
+                )
+                st.plotly_chart(fig_radar, use_container_width=True)
         
-        fig_radar = plot_radar_chart(indicators_radar, selected_fund_radar, metrics=available_metrics[:5], title="")
-        st.plotly_chart(fig_radar, use_container_width=True)
+        st.divider()
         
-        st.info("Le radar normalise chaque metrique sur 0-100. Plus la surface est grande, meilleur est le fonds.")
+        # Explication
+        with st.expander("Comment lire le radar ?"):
+            st.markdown("""
+            **Interpretation:**
+            - Chaque axe represente une metrique normalisee sur 0-100
+            - Plus la surface est grande, meilleur est le fonds sur ces criteres
+            - Pour Volatilite, Drawdown et Frais: l'echelle est inversee (plus grand = meilleur = moins de risque/frais)
+            
+            **Omega vs Benchmark:**
+            - Mesure combien tu gagnes vs le benchmark pour chaque euro perdu vs le benchmark
+            - > 1 = tu surperformes plus souvent/fort que tu sous-performes
+            - C'est un ratio gains/pertes RELATIF au benchmark
+            """)
 
 
 # ==============================================================================
